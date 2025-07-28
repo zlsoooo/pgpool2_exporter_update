@@ -28,9 +28,11 @@ import (
 	"fmt"
 	"math"
 	"net/url"
-	_ "os"
+	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -268,11 +270,11 @@ func NewExporter(dsn string, namespace string) *Exporter {
 		}),
 		metricMap: makeDescMap(metricMaps, namespace),
 		DB:        db,
-		watchdogLeaderStatus := prometheus.NewGauge(prometheus.GaugeOpts{
+		watchdogLeaderStatus: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: namespace,
 			Name:      "watchdog_node_status",
 			Help:      "Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
-		}),		
+		}),
 	}
 }
 

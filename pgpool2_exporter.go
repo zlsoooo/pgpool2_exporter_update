@@ -809,12 +809,12 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		e.error.Set(1)
 	}
 
-	// ===== Watchdog Leader Metric with ENV vars =====
+	// ===== Watchdog Node Status Parsing (non -v format) =====
 	pcpHost := os.Getenv("PCP_HOST")
 	pcpPort := os.Getenv("PCP_PORT")
 	pcpUser := os.Getenv("PCP_USER")
 
-	cmd := exec.Command("pcp_watchdog_info", "-v", "-h", pcpHost, "-p", pcpPort, "-U", pcpUser, "-w")
+	cmd := exec.Command("pcp_watchdog_info", "-h", pcpHost, "-p", pcpPort, "-U", pcpUser, "-w")
 	out, err := cmd.Output()
 	if err != nil {
 		level.Error(Logger).Log("msg", "Failed to run pcp_watchdog_info", "err", err)
@@ -822,66 +822,31 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}
 
 	lines := strings.Split(string(out), "\n")
-	localHost, err := os.Hostname()
-	if err != nil {
-		level.Error(Logger).Log("msg", "Failed to get local hostname", "err", err)
-		localHost = ""
-	}
 
-	var currentBlock map[string]string = make(map[string]string)
-	var inNodeSection bool = false
-	var metricEmitted bool = false
-
-	for _, line := range lines {
+	// Skip first line (cluster summary)
+	for _, line := range lines[1:] {
 		line = strings.TrimSpace(line)
 		if line == "" {
-			if inNodeSection && currentBlock["Host Name"] != "" {
-				hostname := currentBlock["Host Name"]
-				port := currentBlock["Pgpool port"]
-				statusName := currentBlock["Status Name"]
-				role := statusName
-
-				if strings.Contains(hostname, localHost) || hostname == "127.0.0.1" {
-					value := 0.0
-					if statusName == "LEADER" {
-						value = 1.0
-					}
-					ch <- prometheus.MustNewConstMetric(
-						prometheus.NewDesc(
-							prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
-							"Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
-							[]string{"hostname", "port", "role"},
-							nil,
-						),
-						prometheus.GaugeValue,
-						value,
-						hostname, port, role,
-					)
-					metricEmitted = true
-				}
-			}
-			inNodeSection = false
-			currentBlock = make(map[string]string)
 			continue
 		}
 
-		if strings.HasPrefix(line, "Node Name") && strings.Contains(line, ":9999") {
-			inNodeSection = true
+		// Expected format:
+		// <Node Name> <Host Name> <Pgpool Port> <WD Port> <Status> <Status Name> <X> <Membership Status>
+		fields := strings.Fields(line)
+		if len(fields) < 8 {
+			continue
 		}
 
-		if inNodeSection {
-			if strings.Contains(line, ":") {
-				parts := strings.SplitN(line, ":", 2)
-				if len(parts) == 2 {
-					key := strings.TrimSpace(parts[0])
-					val := strings.TrimSpace(parts[1])
-					currentBlock[key] = val
-				}
-			}
-		}
-	}
+		hostname := fields[1]
+		port := fields[2]
+		statusName := fields[5]
+		role := statusName // label로 사용
 
-	if !metricEmitted {
+		value := 0.0
+		if statusName == "LEADER" {
+			value = 1.0
+		}
+
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
 				prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
@@ -890,11 +855,12 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 				nil,
 			),
 			prometheus.GaugeValue,
-			0.0,
-			"unknown", "unknown", "unknown",
+			value,
+			hostname, port, role,
 		)
 	}
 }
+
 
 
 // Turn the MetricMap column mapping into a prometheus descriptor mapping.

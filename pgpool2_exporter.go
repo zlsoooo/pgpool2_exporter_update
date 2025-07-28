@@ -697,6 +697,31 @@ func QueryVersion(db *sql.DB) (semver.Version, error) {
 	return semver.Version{}, errors.New(fmt.Sprintln("Error retrieving Pgpool-II version:", err))
 }
 
+// getPCPConfig returns PCP configuration from environment variables
+func getPCPConfig() (host, port, user, password string) {
+	host = os.Getenv("PCP_HOST")
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	
+	port = os.Getenv("PCP_PORT")
+	if port == "" {
+		port = "9898"
+	}
+	
+	user = os.Getenv("PCP_USER")
+	if user == "" {
+		user = "pgpool"
+	}
+	
+	password = os.Getenv("PCP_PASSWORD")
+	if password == "" {
+		password = ""
+	}
+	
+	return host, port, user, password
+}
+
 // Iterate through all the namespace mappings in the exporter and run their queries.
 func queryNamespaceMappings(ch chan<- prometheus.Metric, db *sql.DB, metricMap map[string]MetricMapNamespace) map[string]error {
 	// Return a map of namespace -> errors
@@ -811,7 +836,8 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}
 
 	// ----- watchdog leader status check -----
-	cmd := exec.Command("pcp_watchdog_info", "-v", "-h", "127.0.0.1", "-p", "9898", "-U", "pgpool", "-w")
+	host, port, user, password := getPCPConfig()
+	cmd := exec.Command("pcp_watchdog_info", "-v", "-h", host, "-p", port, "-U", user, "-w")
 	out, err := cmd.Output()
 	if err != nil {
 		level.Error(Logger).Log("msg", "Failed to run pcp_watchdog_info", "err", err)

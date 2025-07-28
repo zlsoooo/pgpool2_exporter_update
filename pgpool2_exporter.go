@@ -825,40 +825,39 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 
 	// Skip first line (cluster summary)
 	for _, line := range lines[1:] {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		// Expected format:
-		// <Node Name> <Host Name> <Pgpool Port> <WD Port> <Status> <Status Name> <X> <Membership Status>
-		fields := strings.Fields(line)
-		if len(fields) < 8 {
-			continue
-		}
-
-		hostname := fields[1]
-		port := fields[2]
-		statusName := fields[5]
-		role := statusName // label로 사용
-
-		value := 0.0
-		if statusName == "LEADER" {
-			value = 1.0
-		}
-
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
-				"Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
-				[]string{"hostname", "port", "role"},
-				nil,
-			),
-			prometheus.GaugeValue,
-			value,
-			hostname, port, role,
-		)
+	line = strings.TrimSpace(line)
+	if line == "" {
+		continue
 	}
+
+	fields := strings.Fields(line)
+	if len(fields) < 10 {
+		continue
+	}
+
+	hostname := fields[3]       // 실제 hostname (192.168.222.31)
+	port := fields[4]           // pgpool port (9999)
+	statusName := fields[7]     // LEADER, SHUTDOWN 등
+	role := statusName          // 라벨 그대로 사용
+
+	value := 0.0
+	if statusName == "LEADER" {
+		value = 1.0
+	}
+
+	ch <- prometheus.MustNewConstMetric(
+		prometheus.NewDesc(
+			prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
+			"Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
+			[]string{"hostname", "port", "role"},
+			nil,
+		),
+		prometheus.GaugeValue,
+		value,
+		hostname, port, role,
+	)
+}
+
 }
 
 

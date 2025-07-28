@@ -836,7 +836,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}
 
 	// ----- watchdog leader status check -----
-	host, port, user, password := getPCPConfig()
+	host, port, user, _ := getPCPConfig()
 	cmd := exec.Command("pcp_watchdog_info", "-v", "-h", host, "-p", port, "-U", user, "-w")
 	out, err := cmd.Output()
 	if err != nil {

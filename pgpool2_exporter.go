@@ -348,22 +348,23 @@ func queryNamespaceMapping(ch chan<- prometheus.Metric, db *sql.DB, namespace st
 			}
 			if len(valueUsername) > 0 {
 				totalBackendsInUse++
-				_, ok := backendsInUse[valuePoolPid]
-				if !ok {
-					backendsInUse[valuePoolPid] = make(map[string]map[string]map[string]float64)
+
+				if _, ok := backendsInUse[valuePoolPid]; !ok {
+					backendsInUse[valuePoolPid] = make(map[string]map[string]map[string]map[string]float64)
 				}
-				_, ok = backendsInUse[valuePoolPid][valuePoolId]
-				if !ok {
-					backendsInUse[valuePoolPid][valuePoolId] = make(map[string]map[string]float64)
+
+				if _, ok := backendsInUse[valuePoolPid][valuePoolId]; !ok {
+					backendsInUse[valuePoolPid][valuePoolId] = make(map[string]map[string]map[string]float64)
 				}
-				_, ok = backendsInUse[valuePoolPid][valuePoolId][valueBackendId]
-				if !ok {
+
+				if _, ok := backendsInUse[valuePoolPid][valuePoolId][valueBackendId]; !ok {
 					backendsInUse[valuePoolPid][valuePoolId][valueBackendId] = make(map[string]map[string]float64)
 				}
-				_, ok = backendsInUse[valuePoolPid][valuePoolId][valueBackendId][valueUsername]
-				if !ok {
+
+				if _, ok := backendsInUse[valuePoolPid][valuePoolId][valueBackendId][valueUsername]; !ok {
 					backendsInUse[valuePoolPid][valuePoolId][valueBackendId][valueUsername] = make(map[string]float64)
 				}
+
 				backendsInUse[valuePoolPid][valuePoolId][valueBackendId][valueUsername][valueDatabase]++
 			}
 		}

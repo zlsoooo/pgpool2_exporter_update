@@ -813,7 +813,6 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	pcpHost := os.Getenv("PCP_HOST")
 	pcpPort := os.Getenv("PCP_PORT")
 	pcpUser := os.Getenv("PCP_USER")
-	pcpPassword := os.Getenv("PCP_PASSWORD")
 
 	cmd := exec.Command("pcp_watchdog_info", "-v", "-h", pcpHost, "-p", pcpPort, "-U", pcpUser, "-w")
 	out, err := cmd.Output()

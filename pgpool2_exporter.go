@@ -157,6 +157,7 @@ type Exporter struct {
 	totalScrapes prometheus.Counter
 	metricMap    map[string]MetricMapNamespace
 	DB           *sql.DB
+	watchdogLeaderStatus prometheus.Gauge
 }
 
 var (
@@ -267,6 +268,11 @@ func NewExporter(dsn string, namespace string) *Exporter {
 		}),
 		metricMap: makeDescMap(metricMaps, namespace),
 		DB:        db,
+		watchdogLeaderStatus := prometheus.NewGauge(prometheus.GaugeOpts{
+			Namespace: namespace,
+			Name:      "watchdog_node_status",
+			Help:      "Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
+		}),		
 	}
 }
 
@@ -793,6 +799,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	e.up.Set(1)
 	e.error.Set(0)
 
+	// Lock before collecting namespace mappings
 	e.mutex.RLock()
 	defer e.mutex.RUnlock()
 
@@ -801,7 +808,83 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		level.Error(Logger).Log("err", errMap)
 		e.error.Set(1)
 	}
+
+	// --- Add watchdog leader detection using `pcp_watchdog_info -v` ---
+	cmd := exec.Command("pcp_watchdog_info", "-v", "-h", "127.0.0.1", "-p", "9898", "-U", "pgpool", "-w")
+	out, err := cmd.Output()
+	if err != nil {
+		level.Error(Logger).Log("msg", "Failed to run pcp_watchdog_info", "err", err)
+		return
+	}
+
+	output := string(out)
+	lines := strings.Split(output, "\n")
+
+	var hostname, port, role, statusName string
+	isLocalNode := false
+	metricEmitted := false
+
+	localHost, err := os.Hostname()
+	if err != nil {
+		level.Error(Logger).Log("msg", "Failed to get hostname", "err", err)
+		localHost = ""
+	}
+
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(line, "Node Name") {
+			// Determine role from node name
+			if strings.Contains(line, "primary") {
+				role = "primary"
+			} else if strings.Contains(line, "standby") {
+				role = "standby"
+			} else {
+				role = "unknown"
+			}
+		} else if strings.HasPrefix(line, "Host Name") {
+			val := strings.TrimSpace(strings.TrimPrefix(line, "Host Name         :"))
+			hostname = val
+			isLocalNode = strings.Contains(val, localHost)
+		} else if strings.HasPrefix(line, "Pgpool port") {
+			port = strings.TrimSpace(strings.TrimPrefix(line, "Pgpool port       :"))
+		} else if strings.HasPrefix(line, "Status Name") {
+			statusName = strings.TrimSpace(strings.TrimPrefix(line, "Status Name       :"))
+			if isLocalNode {
+				value := 0.0
+				if statusName == "LEADER" {
+					value = 1.0
+				}
+				ch <- prometheus.MustNewConstMetric(
+					prometheus.NewDesc(
+						prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
+						"Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
+						[]string{"hostname", "port", "role"},
+						nil,
+					),
+					prometheus.GaugeValue,
+					value,
+					hostname, port, role,
+				)
+				metricEmitted = true
+			}
+		}
+	}
+
+	if !metricEmitted {
+		ch <- prometheus.MustNewConstMetric(
+			prometheus.NewDesc(
+				prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
+				"Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
+				[]string{"hostname", "port", "role"},
+				nil,
+			),
+			prometheus.GaugeValue,
+			0.0,
+			"unknown", "unknown", "unknown",
+		)
+	}
 }
+
 
 // Turn the MetricMap column mapping into a prometheus descriptor mapping.
 func makeDescMap(metricMaps map[string]map[string]ColumnMapping, namespace string) map[string]MetricMapNamespace {

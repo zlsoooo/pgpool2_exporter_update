@@ -159,7 +159,7 @@ type Exporter struct {
 	totalScrapes prometheus.Counter
 	metricMap    map[string]MetricMapNamespace
 	DB           *sql.DB
-	watchdogLeaderStatus prometheus.Gauge
+
 }
 
 var (
@@ -270,11 +270,7 @@ func NewExporter(dsn string, namespace string) *Exporter {
 		}),
 		metricMap: makeDescMap(metricMaps, namespace),
 		DB:        db,
-		watchdogLeaderStatus: prometheus.NewGauge(prometheus.GaugeOpts{
-			Namespace: namespace,
-			Name:      "watchdog_node_status",
-			Help:      "Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
-		}),
+
 	}
 }
 
@@ -354,11 +350,11 @@ func queryNamespaceMapping(ch chan<- prometheus.Metric, db *sql.DB, namespace st
 				totalBackendsInUse++
 				_, ok := backendsInUse[valuePoolPid]
 				if !ok {
-					backendsInUse[valuePoolPid] = make(map[string]map[string]map[string]map[string]float64)
+					backendsInUse[valuePoolPid] = make(map[string]map[string]map[string]float64)
 				}
 				_, ok = backendsInUse[valuePoolPid][valuePoolId]
 				if !ok {
-					backendsInUse[valuePoolPid][valuePoolId] = make(map[string]map[string]map[string]float64)
+					backendsInUse[valuePoolPid][valuePoolId] = make(map[string]map[string]float64)
 				}
 				_, ok = backendsInUse[valuePoolPid][valuePoolId][valueBackendId]
 				if !ok {
@@ -697,30 +693,7 @@ func QueryVersion(db *sql.DB) (semver.Version, error) {
 	return semver.Version{}, errors.New(fmt.Sprintln("Error retrieving Pgpool-II version:", err))
 }
 
-// getPCPConfig returns PCP configuration from environment variables
-func getPCPConfig() (host, port, user, password string) {
-	host = os.Getenv("PCP_HOST")
-	if host == "" {
-		host = "127.0.0.1"
-	}
-	
-	port = os.Getenv("PCP_PORT")
-	if port == "" {
-		port = "9898"
-	}
-	
-	user = os.Getenv("PCP_USER")
-	if user == "" {
-		user = "pgpool"
-	}
-	
-	password = os.Getenv("PCP_PASSWORD")
-	if password == "" {
-		password = ""
-	}
-	
-	return host, port, user, password
-}
+
 
 // Iterate through all the namespace mappings in the exporter and run their queries.
 func queryNamespaceMappings(ch chan<- prometheus.Metric, db *sql.DB, metricMap map[string]MetricMapNamespace) map[string]error {
@@ -802,11 +775,11 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		}
 	}(time.Now())
 
-	// Check connection availability and close the connection if it fails.
+	// Check connection availability and reconnect if needed
 	if err = ping(e.DB); err != nil {
 		level.Error(Logger).Log("msg", "Error pinging Pgpool-II", "err", err)
 		if cerr := e.DB.Close(); cerr != nil {
-			level.Error(Logger).Log("msg", "Error while closing non-pinging connection", "err", err)
+			level.Error(Logger).Log("msg", "Error while closing non-pinging connection", "err", cerr)
 		}
 		level.Info(Logger).Log("msg", "Reconnecting to Pgpool-II")
 		e.DB, err = sql.Open("postgres", e.dsn)
@@ -814,9 +787,9 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		e.DB.SetMaxIdleConns(1)
 
 		if err = ping(e.DB); err != nil {
-			level.Error(Logger).Log("msg", "Error pinging Pgpool-II", "err", err)
+			level.Error(Logger).Log("msg", "Pgpool-II still unreachable", "err", err)
 			if cerr := e.DB.Close(); cerr != nil {
-				level.Error(Logger).Log("msg", "Error while closing non-pinging connection", "err", err)
+				level.Error(Logger).Log("msg", "Error closing again", "err", cerr)
 			}
 			e.up.Set(0)
 			return
@@ -835,9 +808,13 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		e.error.Set(1)
 	}
 
-	// ----- watchdog leader status check -----
-	host, port, user, _ := getPCPConfig()
-	cmd := exec.Command("pcp_watchdog_info", "-v", "-h", host, "-p", port, "-U", user, "-w")
+	// ===== Watchdog Leader Metric with ENV vars =====
+	pcpHost := os.Getenv("PCP_HOST")
+	pcpPort := os.Getenv("PCP_PORT")
+	pcpUser := os.Getenv("PCP_USER")
+	pcpPassword := os.Getenv("PCP_PASSWORD")
+
+	cmd := exec.Command("pcp_watchdog_info", "-v", "-h", pcpHost, "-p", pcpPort, "-U", pcpUser, "-P", pcpPassword)
 	out, err := cmd.Output()
 	if err != nil {
 		level.Error(Logger).Log("msg", "Failed to run pcp_watchdog_info", "err", err)
@@ -845,8 +822,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	}
 
 	lines := strings.Split(string(out), "\n")
-	localHost := ""
-	localHost, err = os.Hostname()
+	localHost, err := os.Hostname()
 	if err != nil {
 		level.Error(Logger).Log("msg", "Failed to get local hostname", "err", err)
 		localHost = ""
@@ -863,11 +839,8 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 				hostname := currentBlock["Host Name"]
 				port := currentBlock["Pgpool port"]
 				statusName := currentBlock["Status Name"]
-
-				// ← 핵심 수정 부분: role = statusName
 				role := statusName
 
-				// 로컬 노드 판별
 				if strings.Contains(hostname, localHost) || hostname == "127.0.0.1" {
 					value := 0.0
 					if statusName == "LEADER" {

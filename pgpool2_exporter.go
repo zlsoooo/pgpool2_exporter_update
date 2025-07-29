@@ -802,7 +802,7 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 
 	
 	collectQueryLatencyMetrics(e.DB, ch)
-	
+
 	e.mutex.RLock()
 	defer e.mutex.RUnlock()
 
@@ -839,13 +839,11 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 			continue
 		}
 
-		delegateIP := fields[0] // e.g., 192.168.222.31:9999
-		hostname := fields[1]   // e.g., Linux
-		role := fields[2]       // e.g., primary
-		port := fields[4]       // e.g., 9999
-		statusName := fields[7] // e.g., LEADER, DEAD, SHUTDOWN
+		hostname := fields[3]    // e.g., 192.168.222.22
+		role := fields[8]        // e.g., LEADER, STANDBY
+		port := fields[4]        // e.g., 9999
+		statusName := fields[8]  // e.g., LEADER, STANDBY
 
-		// Status 판단
 		status := strings.ToUpper(statusName)
 		value := 1.0
 		if status == "SHUTDOWN" || status == "DEAD" || status == "HANGUP" || status == "NOT_SET" || status == "UNKNOWN" {
@@ -856,14 +854,15 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 			prometheus.NewDesc(
 				prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
 				"Whether this Pgpool-II node is up (1 for up, 0 for down)",
-				[]string{"hostname", "delegate_ip", "role", "port", "status"},
+				[]string{"hostname", "role", "port", "status"},
 				nil,
 			),
 			prometheus.GaugeValue,
 			value,
-			hostname, delegateIP, role, port, statusName,
+			hostname, role, port, statusName,
 		)
 	}
+
 
 
 }

@@ -840,15 +840,16 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		statusName := fields[7]     // e.g., LEADER or SHUTDOWN
 		role := statusName          // Use Status Name as role
 
-		value := 0.0
-		if statusName == "LEADER" {
-			value = 1.0
+		value := 1.0
+		if statusName == "SHUTDOWN" {
+			value = 0.0
 		}
+
 
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
 				prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
-				"Whether this Pgpool-II node is the leader (1 for leader, 0 otherwise)",
+				"Whether this Pgpool-II node is up (1 for up, 0 for down)",
 				[]string{"hostname", "port", "role"},
 				nil,
 			),

@@ -800,6 +800,9 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	e.up.Set(1)
 	e.error.Set(0)
 
+	
+	collectQueryLatencyMetrics(e.DB, ch)
+	
 	e.mutex.RLock()
 	defer e.mutex.RUnlock()
 
@@ -824,42 +827,112 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 	lines := strings.Split(string(out), "\n")
 
 	// Skip first line (cluster summary)
-// Parse pcp_watchdog_info output (skip header line)
-	for _, line := range lines[1:] {
+	// Parse pcp_watchdog_info output
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "Watchdog") || strings.HasPrefix(line, "Wd Node") {
 			continue
 		}
+
 		fields := strings.Fields(line)
 		if len(fields) < 10 {
 			continue
 		}
 
-		hostname := fields[3]       // Delegate IP, e.g., 192.168.222.31
-		port := fields[4]           // Pgpool port, e.g., 9999
-		statusName := fields[7]     // e.g., LEADER or SHUTDOWN
-		role := statusName          // Use Status Name as role
+		delegateIP := fields[0] // e.g., 192.168.222.31:9999
+		hostname := fields[1]   // e.g., Linux
+		role := fields[2]       // e.g., primary
+		port := fields[4]       // e.g., 9999
+		statusName := fields[7] // e.g., LEADER, DEAD, SHUTDOWN
 
+		// Status 판단
+		status := strings.ToUpper(statusName)
 		value := 1.0
-		if statusName == "SHUTDOWN" {
+		if status == "SHUTDOWN" || status == "DEAD" || status == "HANGUP" || status == "NOT_SET" || status == "UNKNOWN" {
 			value = 0.0
 		}
-
 
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
 				prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
 				"Whether this Pgpool-II node is up (1 for up, 0 for down)",
-				[]string{"hostname", "port", "role"},
+				[]string{"hostname", "delegate_ip", "role", "port", "status"},
 				nil,
 			),
 			prometheus.GaugeValue,
 			value,
-			hostname, port, role,
+			hostname, delegateIP, role, port, statusName,
 		)
 	}
 
+
 }
+
+func collectQueryLatencyMetrics(db *sql.DB, ch chan<- prometheus.Metric) {
+	const latencyQuery = `
+		SELECT datname, total_time_ms, calls
+		FROM (
+			SELECT
+				d.datname,
+				sum(s.total_plan_time + s.total_exec_time) AS total_time_ms,
+				sum(s.calls) AS calls
+			FROM
+				experdba.pg_stat_statements s
+				JOIN pg_database d ON s.dbid = d.oid
+			GROUP BY d.datname
+			UNION ALL
+			SELECT
+				'no-db' AS datname,
+				0 AS total_time_ms,
+				0 AS calls
+			WHERE NOT EXISTS (
+				SELECT 1 FROM experdba.pg_stat_statements
+			)
+		) AS result;
+	`
+
+	rows, err := db.Query(latencyQuery)
+	if err != nil {
+		level.Error(Logger).Log("msg", "Error querying pg_stat_statements", "err", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var datname string
+		var totalTimeMs, calls float64
+
+		if err := rows.Scan(&datname, &totalTimeMs, &calls); err != nil {
+			level.Error(Logger).Log("msg", "Error scanning row from pg_stat_statements", "err", err)
+			continue
+		}
+
+		ch <- prometheus.MustNewConstMetric(
+			prometheus.NewDesc(
+				"pgpool2_query_latency_total_time_ms",
+				"Total query time (ms) from pg_stat_statements by database",
+				[]string{"datname"},
+				nil,
+			),
+			prometheus.GaugeValue,
+			totalTimeMs,
+			datname,
+		)
+
+		ch <- prometheus.MustNewConstMetric(
+			prometheus.NewDesc(
+				"pgpool2_query_latency_calls",
+				"Total number of calls from pg_stat_statements by database",
+				[]string{"datname"},
+				nil,
+			),
+			prometheus.GaugeValue,
+			calls,
+			datname,
+		)
+	}
+}
+
 
 
 

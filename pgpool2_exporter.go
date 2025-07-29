@@ -833,35 +833,36 @@ func (e *Exporter) scrape(ch chan<- prometheus.Metric) {
 		if line == "" || strings.HasPrefix(line, "Watchdog") || strings.HasPrefix(line, "Wd Node") {
 			continue
 		}
-
+	
 		fields := strings.Fields(line)
 		if len(fields) < 10 {
 			continue
 		}
-
-		hostname := fields[3]    // e.g., 192.168.222.22
-		role := fields[8]        // e.g., LEADER, STANDBY
-		port := fields[4]        // e.g., 9999
-		statusName := fields[8]  // e.g., LEADER, STANDBY
-
-		status := strings.ToUpper(statusName)
+	
+		hostname := fields[3]   // e.g., 192.168.222.22
+		port := fields[4]       // e.g., 9999
+		role := fields[7]       // e.g., STANDBY, LEADER
+	
+		status := strings.ToUpper(role)
 		value := 1.0
 		if status == "SHUTDOWN" || status == "DEAD" || status == "HANGUP" || status == "NOT_SET" || status == "UNKNOWN" {
 			value = 0.0
 		}
-
+	
 		ch <- prometheus.MustNewConstMetric(
 			prometheus.NewDesc(
 				prometheus.BuildFQName("pgpool2", "watchdog", "node_status"),
 				"Whether this Pgpool-II node is up (1 for up, 0 for down)",
-				[]string{"hostname", "role", "port", "status"},
+				[]string{"hostname", "role", "port"},
 				nil,
 			),
 			prometheus.GaugeValue,
 			value,
-			hostname, role, port, statusName,
+			hostname, role, port,
 		)
 	}
+	
+	
 
 
 
